@@ -21,6 +21,7 @@ type StandAloneStorage struct {
 	// Your Data Here (1).
 	Conf    config.Config
 	Engines *engine_util.Engines
+	Test    *engine_util.Engines
 }
 
 func NewStandAloneStorage(conf *config.Config) *StandAloneStorage {
