@@ -58,7 +58,18 @@ func (s *StandAloneStorage) Write(ctx *kvrpcpb.Context, batch []storage.Modify) 
 	// Your Code Here (1).
 	wb := new(engine_util.WriteBatch)
 	for _, modify := range batch {
-		wb.SetCF(engine_util.CfDefault, modify.Key(), modify.Value())
+		switch modify.Data.(type) {
+		case storage.Put:
+			put := modify.Data.(storage.Put)
+			if err := engine_util.PutCF(s.engines.Kv, put.Cf, put.Key, put.Value); err != nil {
+				return err
+			}
+		case storage.Delete:
+			del := modify.Data.(storage.Delete)
+			if err := engine_util.DeleteCF(s.engines.Kv, del.Cf, del.Key); err != nil {
+				return err
+			}
+		}
 	}
 	return s.engines.WriteKV(wb)
 }

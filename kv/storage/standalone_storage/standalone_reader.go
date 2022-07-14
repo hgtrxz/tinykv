@@ -23,7 +23,7 @@ func (s StandaloneReader) GetCF(cf string, key []byte) ([]byte, error) {
 }
 
 func (s StandaloneReader) IterCF(cf string) engine_util.DBIterator {
-	return nil
+	return engine_util.NewCFIterator(cf, s.txn)
 }
 
 func (s StandaloneReader) Close() {
