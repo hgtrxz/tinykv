@@ -5,12 +5,8 @@ import (
 	"github.com/pingcap-incubator/tinykv/kv/storage"
 	"github.com/pingcap-incubator/tinykv/kv/util/engine_util"
 	"github.com/pingcap-incubator/tinykv/proto/pkg/kvrpcpb"
+	"path/filepath"
 )
-
-// todo:
-// 1.StandAloneStorage=>Engines
-// 2.ignore start() & stop() & kvrpcpb.Context
-// 3.Reader() & Writer()
 
 // So you should do all read/write operations through engine_util provided methods.
 // Please read util/engine_util/doc.go to learn more.
@@ -19,16 +15,20 @@ import (
 // communicate with other nodes and all data is stored locally.
 type StandAloneStorage struct {
 	// Your Data Here (1).
-	Conf    config.Config
-	Engines *engine_util.Engines
+	engines *engine_util.Engines
+	config  *config.Config
 }
 
 func NewStandAloneStorage(conf *config.Config) *StandAloneStorage {
 	// Your Code Here (1).
 	// badger.DB
-	DB := engine_util.CreateDB(conf.DBPath, false)
-	Engines := engine_util.NewEngines(DB, nil, conf.DBPath, "")
-	return &StandAloneStorage{Conf: *conf, Engines: Engines}
+	kvPath := filepath.Join(conf.DBPath, "kv")
+	DB := engine_util.CreateDB(kvPath, false)
+	engines := engine_util.NewEngines(DB, nil, kvPath, "")
+	return &StandAloneStorage{
+		engines: engines,
+		config:  conf,
+	}
 }
 
 func (s *StandAloneStorage) Start() error {
@@ -38,6 +38,9 @@ func (s *StandAloneStorage) Start() error {
 
 func (s *StandAloneStorage) Stop() error {
 	// Your Code Here (1).
+	if err := s.engines.Kv.Close(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -47,7 +50,8 @@ func (s *StandAloneStorage) Stop() error {
 // Don’t forget to call Discard() for badger.Txn and close all iterators before discarding.
 func (s *StandAloneStorage) Reader(ctx *kvrpcpb.Context) (storage.StorageReader, error) {
 	// Your Code Here (1).
-	return nil, nil
+	txn := s.engines.Kv.NewTransaction(false)
+	return NewStandaloneReader(txn), nil
 }
 
 func (s *StandAloneStorage) Write(ctx *kvrpcpb.Context, batch []storage.Modify) error {
@@ -56,5 +60,5 @@ func (s *StandAloneStorage) Write(ctx *kvrpcpb.Context, batch []storage.Modify) 
 	for _, modify := range batch {
 		wb.SetCF(engine_util.CfDefault, modify.Key(), modify.Value())
 	}
-	return s.Engines.WriteKV(wb)
+	return s.engines.WriteKV(wb)
 }
