@@ -164,8 +164,40 @@ func newRaft(c *Config) *Raft {
 	if err := c.validate(); err != nil {
 		panic(err.Error())
 	}
+
+	// init state
+	hardState, _, _ := c.Storage.InitialState()
+
+	// prs
+	prs := make(map[uint64]*Progress, len(c.peers))
+	for _, p := range c.peers {
+		if p == c.ID {
+			continue
+		}
+		prs[p] = new(Progress)
+	}
+	// raft log
+	rl := newLog(c.Storage)
+	rl.applied = c.Applied
+
 	// Your Code Here (2A).
-	return nil
+	return &Raft{
+		id:               c.ID,
+		Term:             hardState.Term,
+		Vote:             hardState.Vote,
+		RaftLog:          rl,
+		Prs:              prs,
+		State:            StateFollower,
+		votes:            make(map[uint64]bool),
+		msgs:             make([]pb.Message, 0),
+		Lead:             None,
+		heartbeatTimeout: c.HeartbeatTick,
+		electionTimeout:  c.ElectionTick,
+		heartbeatElapsed: 0,
+		electionElapsed:  0,
+		leadTransferee:   0,
+		PendingConfIndex: 0,
+	}
 }
 
 // sendAppend sends an append RPC with new entries (if any) and the

@@ -26,6 +26,7 @@ import pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 // that not truncated
 type RaftLog struct {
 	// storage contains all stable entries since the last snapshot.
+	// stabled logs
 	storage Storage
 
 	// committed is the highest log position that is known to be in
@@ -35,6 +36,7 @@ type RaftLog struct {
 	// applied is the highest log position that the application has
 	// been instructed to apply to its state machine.
 	// Invariant: applied <= committed
+	// applied but unstable log
 	applied uint64
 
 	// log entries with index <= stabled are persisted to storage.
@@ -56,7 +58,16 @@ type RaftLog struct {
 // to the state that it just commits and applies the latest snapshot.
 func newLog(storage Storage) *RaftLog {
 	// Your Code Here (2A).
-	return nil
+	lastIdx, _ := storage.LastIndex()
+
+	return &RaftLog{
+		storage:         storage,
+		committed:       0,
+		applied:         0,
+		stabled:         lastIdx,
+		entries:         make([]pb.Entry, 0),
+		pendingSnapshot: nil,
+	}
 }
 
 // We need to compact the log entries in some point of time like
