@@ -14,7 +14,10 @@
 
 package raft
 
-import pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
+import (
+	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
+	"github.com/pingcap/errors"
+)
 
 // RaftLog manage the log entries, its struct look like:
 //
@@ -92,11 +95,31 @@ func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 // LastIndex return the last index of the log entries
 func (l *RaftLog) LastIndex() uint64 {
 	// Your Code Here (2A).
-	return 0
+	// todo err 怎么处理？什么时候会发生err
+	length := len(l.entries)
+	if li, err := l.storage.LastIndex(); err == nil && length == 1 { // 有日志，但已经全部保存为快照;
+		return li
+	}
+	// 节点只有一个 sentinel log OR 部分保存为快照
+	return l.entries[length-1].Index
 }
 
 // Term return the term of the entry in the given index
+// [1 2 3 4] [?] 5 6 => log_idx:5->idx:1  stabled=4 todo 搞清楚 log index 是怎么存储的
+// [?] 1 2 => log_idx:2->idx:2 stabled=0
 func (l *RaftLog) Term(i uint64) (uint64, error) {
 	// Your Code Here (2A).
-	return 0, nil
+	// 1.没有快照 => return l.entries[i].Term
+	// 2.有快照，且 i 日志在快照里面 => l.storage.Entries(i,i+1)
+	// 3.有快照，但 i 日志在内存里面 => l.entries[i - l.storage.LastIndex()]
+
+	if i <= l.stabled { // 日志在外存
+		return l.storage.Term(i)
+	}
+	// 日志在内存
+	arrIdx := i - l.stabled
+	if arrIdx < 0 || arrIdx >= uint64(len(l.entries)) {
+		return None, errors.Errorf("illegal log index:%d", i)
+	}
+	return l.entries[arrIdx].Term, nil
 }
