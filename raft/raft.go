@@ -18,6 +18,7 @@ import (
 	"errors"
 	"github.com/pingcap-incubator/tinykv/log"
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
+	"math/rand"
 )
 
 // None is a placeholder node ID used when there is no leader.
@@ -241,6 +242,7 @@ func (r *Raft) becomeFollower(term uint64, lead uint64) {
 	if term > r.Term {
 		r.Vote, r.votes = None, make(map[uint64]bool)
 	}
+	r.randomElectionTimeout = r.electionTimeout + rand.Intn(r.electionTimeout)
 	r.State, r.Term, r.Lead, r.electionElapsed = StateFollower, term, lead, 0
 	r.tickerFunc, r.stepFunc = r.tickElection, r.stepFollower
 	log.Infof("Node[%d] become Follower Term[%d]", r.id, r.Term)
@@ -253,6 +255,8 @@ func (r *Raft) stepFollower(msg pb.Message) {
 	case pb.MessageType_MsgHup:
 		r.startElection()
 	case pb.MessageType_MsgHeartbeat:
+		// todo
+		r.handleHeartbeat(msg)
 		r.electionElapsed = 0
 		resp.MsgType = pb.MessageType_MsgHeartbeatResponse
 		r.sendMsg(resp)
@@ -267,6 +271,7 @@ func (r *Raft) stepFollower(msg pb.Message) {
 // becomeCandidate transform this peer's state to candidate
 func (r *Raft) becomeCandidate() {
 	// Your Code Here (2A).
+	r.randomElectionTimeout = r.electionTimeout + rand.Intn(r.electionTimeout)
 	r.State, r.Term, r.Lead = StateCandidate, r.Term+1, None
 	r.tickerFunc, r.stepFunc = r.tickElection, r.stepCandidate
 	log.Infof("Node[%d] become Candidate Term[%d]", r.id, r.Term)
@@ -279,6 +284,7 @@ func (r *Raft) stepCandidate(msg pb.Message) {
 	case pb.MessageType_MsgHup:
 		r.startElection()
 	case pb.MessageType_MsgHeartbeat:
+		resp.MsgType = pb.MessageType_MsgHeartbeatResponse
 		r.sendMsg(resp)
 		r.becomeFollower(msg.Term, msg.From)
 	case pb.MessageType_MsgRequestVoteResponse:
@@ -293,7 +299,7 @@ func (r *Raft) stepCandidate(msg pb.Message) {
 
 func (r *Raft) tickElection() {
 	r.electionElapsed++
-	if r.electionElapsed < r.electionTimeout {
+	if r.electionElapsed < r.randomElectionTimeout {
 		return
 	}
 	// pass a local message 'MessageType_MsgHup' to its Step method and start a new election.
@@ -312,7 +318,7 @@ func (r *Raft) becomeLeader() {
 func (r *Raft) stepLeader(msg pb.Message) {
 	switch msg.MsgType {
 	case pb.MessageType_MsgBeat:
-		r.broadcastHeartbeat() // todo 能不能改成异步的，以提高性能
+		r.broadcastHeartbeat() // todo 能不能改成异步的
 	case pb.MessageType_MsgHeartbeatResponse:
 		//
 	default:
@@ -321,15 +327,17 @@ func (r *Raft) stepLeader(msg pb.Message) {
 }
 
 func (r *Raft) broadcastHeartbeat() {
-	if r.State != StateLeader {
-		return
-	}
-	for k, _ := range r.Prs {
-		if k == r.id {
-			continue
+	go func() {
+		if r.State != StateLeader {
+			return
 		}
-		r.sendHeartbeat(k)
-	}
+		for k, _ := range r.Prs {
+			if k == r.id {
+				continue
+			}
+			r.sendHeartbeat(k)
+		}
+	}()
 }
 
 func (r *Raft) tickHeartbeat() {
@@ -352,7 +360,7 @@ func (r *Raft) Step(m pb.Message) error {
 	case m.Term < r.Term:
 		// ignore
 		resp := pb.Message{
-			MsgType: m.MsgType + 1, // req => resp
+			MsgType: m.MsgType + 1, // todo req => resp 可以这样吗
 			To:      m.From,
 			From:    r.id,
 			Term:    r.Term,
@@ -405,8 +413,23 @@ func (r *Raft) handleVoteReq(m pb.Message) {
 // zero election timeout => term++ => become Candidate => vote itself => vote req rpc
 func (r *Raft) startElection() {
 	r.electionReset()
-	// send vote request rpc
 
+	li := r.RaftLog.LastIndex()
+	lt, _ := r.RaftLog.Term(r.RaftLog.LastIndex())
+	msg := pb.Message{
+		MsgType: pb.MessageType_MsgRequestVote,
+		From:    r.id,
+		Term:    r.Term,
+		LogTerm: lt,
+		Index:   li,
+	}
+	for p, _ := range r.Prs {
+		if p == r.id {
+			continue
+		}
+		msg.To = p
+		r.sendMsg(msg)
+	}
 }
 
 // 发起选举前，重新状态

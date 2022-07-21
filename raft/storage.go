@@ -41,7 +41,7 @@ var ErrSnapshotTemporarilyUnavailable = errors.New("snapshot is temporarily unav
 // Storage is an interface that may be implemented by the application
 // to retrieve log entries from storage.
 //
-// If any Storage method returns an error, the raft instance will
+// If any Storage method returns an error , the raft instance will
 // become inoperable and refuse to participate in elections; the
 // application is responsible for cleanup and recovery in this case.
 type Storage interface {
@@ -60,8 +60,8 @@ type Storage interface {
 	LastIndex() (uint64, error)
 	// FirstIndex returns the index of the first log entry that is
 	// possibly available via Entries (older entries have been incorporated
-	// into the latest Snapshot; if storage only contains the dummy entry the
-	// first log entry is not available).
+	// into the latest Snapshot; 「if storage only contains the dummy entry the
+	// first log entry is not available」).
 	FirstIndex() (uint64, error)
 	// Snapshot returns the most recent snapshot.
 	// If snapshot is temporarily unavailable, it should return ErrSnapshotTemporarilyUnavailable,
