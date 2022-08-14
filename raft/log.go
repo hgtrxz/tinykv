@@ -19,6 +19,10 @@ import (
 	"github.com/pingcap/errors"
 )
 
+const (
+	SentinelLogIndex = 0
+)
+
 // RaftLog manage the log entries, its struct look like:
 //
 //  snapshot/first.....applied....committed....stabled.....last
@@ -62,13 +66,15 @@ type RaftLog struct {
 func newLog(storage Storage) *RaftLog {
 	// Your Code Here (2A).
 	lastIdx, _ := storage.LastIndex()
-
+	// entries[0] as sentinel
+	sentinel := pb.Entry{EntryType: pb.EntryType_EntryNormal, Index: SentinelLogIndex}
+	entries := make([]pb.Entry, 0)
 	return &RaftLog{
 		storage:         storage,
 		committed:       0,
 		applied:         0,
 		stabled:         lastIdx,
-		entries:         make([]pb.Entry, 0),
+		entries:         append(entries, sentinel),
 		pendingSnapshot: nil,
 	}
 }
@@ -94,10 +100,8 @@ func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 
 // LastIndex return the last index of the log entries
 func (l *RaftLog) LastIndex() uint64 {
-	// Your Code Here (2A).
-	// todo err 怎么处理？什么时候会发生err
 	length := len(l.entries)
-	if li, err := l.storage.LastIndex(); err == nil && length == 1 { // 有日志，但已经全部保存为快照;
+	if li, err := l.storage.LastIndex(); err == nil && li != 0 && length == 1 { // 所有的 log 都已经持久化，entries 只有哨兵日志
 		return li
 	}
 	// 节点只有一个 sentinel log OR 部分保存为快照
@@ -108,7 +112,6 @@ func (l *RaftLog) LastIndex() uint64 {
 // [1 2 3 4] [?] 5 6 => log_idx:5->idx:1  stabled=4 todo 搞清楚 log index 是怎么存储的
 // [?] 1 2 => log_idx:2->idx:2 stabled=0
 func (l *RaftLog) Term(i uint64) (uint64, error) {
-	// Your Code Here (2A).
 	// 1.没有快照 => return l.entries[i].Term
 	// 2.有快照，且 i 日志在快照里面 => l.storage.Entries(i,i+1)
 	// 3.有快照，但 i 日志在内存里面 => l.entries[i - l.storage.LastIndex()]

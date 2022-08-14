@@ -16,6 +16,17 @@ import (
 	"strings"
 )
 
+// globalLogSwitch 全局日志开关
+var globalLogSwitch = CloseLog
+
+// Switch 日志开关
+type Switch int8
+
+const (
+	OpenLog Switch = iota
+	CloseLog
+)
+
 const (
 	Ldate         = log.Ldate
 	Llongfile     = log.Llongfile
@@ -168,6 +179,10 @@ func (l *Logger) log(t LogType, v ...interface{}) {
 }
 
 func (l *Logger) logf(t LogType, format string, v ...interface{}) {
+	if globalLogSwitch == CloseLog {
+		return
+	}
+
 	if l.level|LogLevel(t) != l.level {
 		return
 	}

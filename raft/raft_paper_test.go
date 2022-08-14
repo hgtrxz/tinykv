@@ -97,7 +97,7 @@ func TestLeaderBcastBeat2AA(t *testing.T) {
 	for i := 0; i < hi; i++ {
 		r.tick()
 	}
-
+	// todo stepLeader() 需要提供  MessageType_MsgHeartbeat handler ?
 	msgs := r.readMessages()
 	sort.Sort(messageSlice(msgs))
 	wmsgs := []pb.Message{
@@ -105,7 +105,7 @@ func TestLeaderBcastBeat2AA(t *testing.T) {
 		{From: 1, To: 3, Term: 1, MsgType: pb.MessageType_MsgHeartbeat},
 	}
 	if !reflect.DeepEqual(msgs, wmsgs) {
-		t.Errorf("msgs = %v, want %v", msgs, wmsgs)
+		t.Errorf("\nmsgs = %+v\nwant = %+v", msgs, wmsgs)
 	}
 }
 

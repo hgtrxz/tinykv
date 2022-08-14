@@ -23,6 +23,7 @@ import (
 
 // None is a placeholder node ID used when there is no leader.
 const None uint64 = 0
+const InitTerm uint64 = 1
 
 // StateType represents the role of a node in a cluster.
 type StateType uint64
@@ -115,6 +116,7 @@ type Raft struct {
 	Vote uint64
 
 	// the log
+	// 日志索引为 0 的日志是哨兵日志，即普通日志的索引从 1 开始
 	RaftLog *RaftLog
 
 	// log replication progress of each peers
@@ -197,7 +199,11 @@ func newRaft(c *Config) *Raft {
 		raft.Prs[p] = &Progress{Match: li + 1, Next: 0}
 	}
 	// raft log
-	raft.Term, raft.Vote, raft.RaftLog.committed = hardState.Term, hardState.Vote, hardState.Commit
+	var term uint64
+	if term = hardState.Term; term == None {
+		term = InitTerm
+	}
+	raft.Term, raft.Vote, raft.RaftLog.committed = term, hardState.Vote, hardState.Commit
 
 	// follower init...
 	raft.becomeFollower(raft.Term, raft.Lead)
@@ -232,7 +238,6 @@ func (r *Raft) sendHeartbeat(to uint64) {
 
 // tick advances the internal logical clock by a single tick.
 func (r *Raft) tick() {
-	// Your Code Here (2A).
 	r.tickerFunc()
 }
 
@@ -249,17 +254,10 @@ func (r *Raft) becomeFollower(term uint64, lead uint64) {
 
 // Follower: handle heartbeat rpc  & append log & snapshot
 func (r *Raft) stepFollower(msg pb.Message) {
-	resp := r.getRespMessage(msg)
 	switch msg.MsgType {
 	case pb.MessageType_MsgHup: // election timeout
 		r.becomeCandidate()
 		r.startElection()
-	case pb.MessageType_MsgHeartbeat:
-		// todo
-		r.handleHeartbeat(msg)
-		r.electionElapsed = 0
-		resp.MsgType = pb.MessageType_MsgHeartbeatResponse
-		r.sendMessage(resp)
 	case pb.MessageType_MsgAppend:
 		// todo
 	case pb.MessageType_MsgSnapshot:
@@ -279,13 +277,9 @@ func (r *Raft) becomeCandidate() {
 
 // Candidate: heartbeat rpc & vote resp
 func (r *Raft) stepCandidate(msg pb.Message) {
-	resp := r.getRespMessage(msg)
 	switch msg.MsgType {
 	case pb.MessageType_MsgHup: // election timeout
 		r.startElection()
-	case pb.MessageType_MsgHeartbeat: // leader heartbeat req
-		r.sendMessage(resp)
-		r.becomeFollower(msg.Term, msg.From)
 	case pb.MessageType_MsgRequestVoteResponse: // vote response
 		if !msg.Reject {
 			r.Vote++
@@ -309,7 +303,8 @@ func (r *Raft) tickElection() {
 func (r *Raft) becomeLeader() {
 	// NOTE: Leader should propose a noop entry on its term
 	r.State, r.Lead = StateLeader, r.id
-	r.tickerFunc, r.stepFunc = r.tickHeartbeat, r.stepLeader
+	r.tickerFunc, r.stepFunc, r.heartbeatElapsed = r.tickHeartbeat, r.stepLeader, 0
+	r.broadcastHeartbeat()
 	log.Infof("Node[%d] become Leader Term[%d]", r.id, r.Term)
 }
 
@@ -318,6 +313,8 @@ func (r *Raft) stepLeader(req pb.Message) {
 	case pb.MessageType_MsgBeat: // broadcast heartbeat to Followers
 		r.heartbeatElapsed = 0
 		r.broadcastHeartbeat()
+	case pb.MessageType_MsgPropose: // local message
+		r.handleLogPropose(req)
 	case pb.MessageType_MsgHeartbeatResponse:
 		//
 	default:
@@ -325,18 +322,27 @@ func (r *Raft) stepLeader(req pb.Message) {
 	}
 }
 
+// 注意，不要写成异步的，否则无法通过 TestLeaderBcastBeat2AA() 用例
 func (r *Raft) broadcastHeartbeat() {
-	go func() {
-		if r.State != StateLeader {
-			return
+	if r.State != StateLeader {
+		return
+	}
+	for k, _ := range r.Prs {
+		if k == r.id {
+			continue
 		}
-		for k, _ := range r.Prs {
-			if k == r.id {
-				continue
-			}
-			r.sendHeartbeat(k)
-		}
-	}()
+		r.sendHeartbeat(k)
+	}
+}
+
+// todo 什么意思
+func (r *Raft) handleLogPropose(req pb.Message) {
+	if r.State != StateLeader {
+		return
+	}
+	for _, entry := range req.Entries {
+		r.RaftLog.entries = append(r.RaftLog.entries, *entry)
+	}
 }
 
 func (r *Raft) tickHeartbeat() {
@@ -382,6 +388,8 @@ func (r *Raft) Step(m pb.Message) error {
 	switch m.MsgType {
 	case pb.MessageType_MsgRequestVote: // vote request handler
 		r.handleVoteRequest(m)
+	case pb.MessageType_MsgHeartbeat: // leader heartbeat rpc handler
+		r.handleHeartbeat(m)
 	default:
 		r.stepFunc(m)
 	}
@@ -432,6 +440,7 @@ func (r *Raft) startElection() {
 // 发起选举前，重置状态
 func (r *Raft) electionReset() {
 	r.electionElapsed, r.Vote, r.votes, r.Lead, r.Term = 0, 1, make(map[uint64]bool), None, r.Term+1
+	r.votes[r.id] = true
 }
 
 // handleAppendEntries handle AppendEntries RPC request
@@ -442,6 +451,11 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 // handleHeartbeat handle Heartbeat RPC request
 func (r *Raft) handleHeartbeat(m pb.Message) {
 	// Your Code Here (2A).
+	r.electionElapsed = 0
+	if r.State != StateFollower {
+		r.becomeFollower(m.Term, m.From)
+	}
+	r.sendMessage(r.getRespMessage(m))
 }
 
 // handleSnapshot handle Snapshot RPC request

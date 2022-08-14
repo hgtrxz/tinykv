@@ -32,7 +32,7 @@ step() 作为消息处理的统一入口，会做一些统一的消息前置处�
 - Term < r.Term => reject request
 - Term > r.Term => update term&lead, becomeFollower
 
-任何节点处理 VoteRequest RPC 的流程一样，在 stepFunc() 外面处理：
+任何节点处理 VoteRequest RPC 与 Heartbeat RPC 的流程一样，在 stepFunc() 外面处理：
 
 ![](/Users/shize.wang/personal/tinykv/design/imgs/vote_request.png)
 
@@ -41,14 +41,12 @@ step() 作为消息处理的统一入口，会做一些统一的消息前置处�
 在 step() 统一处理 VoteRequest RPC 之后，stepFollower()：
 
 - MessageType_MsgHup：local message，选举超时
-- MessageType_MsgHeartbeat：rpc message，Leader 心跳续约
 - MessageType_MsgAppend：rpc message，Leader 日志复制
 - MessageType_MsgSnapshot：rpc message，Leader snapshot install
 
 stepCandidate():
 
 - MessageType_MsgHup：local message 选举超时
-- MessageType_MsgHeartbeat：rpc message，Leader 心跳续约
 - MessageType_MsgRequestVoteResponse：rpc message，投票请求响应
 
 #### MessageType_MsgHup handler
