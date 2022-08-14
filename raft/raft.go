@@ -227,7 +227,7 @@ func (r *Raft) sendHeartbeat(to uint64) {
 		LogTerm: lt,
 		Index:   li,
 	}
-	r.sendMsg(req)
+	r.sendMessage(req)
 }
 
 // tick advances the internal logical clock by a single tick.
@@ -238,7 +238,6 @@ func (r *Raft) tick() {
 
 // becomeFollower transform this peer's state to Follower
 func (r *Raft) becomeFollower(term uint64, lead uint64) {
-	// Your Code Here (2A).
 	if term > r.Term {
 		r.Vote, r.votes = None, make(map[uint64]bool)
 	}
@@ -250,16 +249,17 @@ func (r *Raft) becomeFollower(term uint64, lead uint64) {
 
 // Follower: handle heartbeat rpc  & append log & snapshot
 func (r *Raft) stepFollower(msg pb.Message) {
-	resp := r.initRespMsg(msg)
+	resp := r.getRespMessage(msg)
 	switch msg.MsgType {
-	case pb.MessageType_MsgHup:
+	case pb.MessageType_MsgHup: // election timeout
+		r.becomeCandidate()
 		r.startElection()
 	case pb.MessageType_MsgHeartbeat:
 		// todo
 		r.handleHeartbeat(msg)
 		r.electionElapsed = 0
 		resp.MsgType = pb.MessageType_MsgHeartbeatResponse
-		r.sendMsg(resp)
+		r.sendMessage(resp)
 	case pb.MessageType_MsgAppend:
 		// todo
 	case pb.MessageType_MsgSnapshot:
@@ -269,25 +269,24 @@ func (r *Raft) stepFollower(msg pb.Message) {
 }
 
 // becomeCandidate transform this peer's state to candidate
+// 不要在这里累加任期，任期变更统一有 step()的前置处理 与 startElection()处理
 func (r *Raft) becomeCandidate() {
-	// Your Code Here (2A).
 	r.randomElectionTimeout = r.electionTimeout + rand.Intn(r.electionTimeout)
-	r.State, r.Term, r.Lead = StateCandidate, r.Term+1, None
+	r.State, r.Lead = StateCandidate, None
 	r.tickerFunc, r.stepFunc = r.tickElection, r.stepCandidate
 	log.Infof("Node[%d] become Candidate Term[%d]", r.id, r.Term)
 }
 
 // Candidate: heartbeat rpc & vote resp
 func (r *Raft) stepCandidate(msg pb.Message) {
-	resp := r.initRespMsg(msg)
+	resp := r.getRespMessage(msg)
 	switch msg.MsgType {
-	case pb.MessageType_MsgHup:
+	case pb.MessageType_MsgHup: // election timeout
 		r.startElection()
-	case pb.MessageType_MsgHeartbeat:
-		resp.MsgType = pb.MessageType_MsgHeartbeatResponse
-		r.sendMsg(resp)
+	case pb.MessageType_MsgHeartbeat: // leader heartbeat req
+		r.sendMessage(resp)
 		r.becomeFollower(msg.Term, msg.From)
-	case pb.MessageType_MsgRequestVoteResponse:
+	case pb.MessageType_MsgRequestVoteResponse: // vote response
 		if !msg.Reject {
 			r.Vote++
 		}
@@ -308,17 +307,17 @@ func (r *Raft) tickElection() {
 
 // becomeLeader transform this peer's state to leader
 func (r *Raft) becomeLeader() {
-	// Your Code Here (2A).
 	// NOTE: Leader should propose a noop entry on its term
 	r.State, r.Lead = StateLeader, r.id
 	r.tickerFunc, r.stepFunc = r.tickHeartbeat, r.stepLeader
 	log.Infof("Node[%d] become Leader Term[%d]", r.id, r.Term)
 }
 
-func (r *Raft) stepLeader(msg pb.Message) {
-	switch msg.MsgType {
-	case pb.MessageType_MsgBeat:
-		r.broadcastHeartbeat() // todo 能不能改成异步的
+func (r *Raft) stepLeader(req pb.Message) {
+	switch req.MsgType {
+	case pb.MessageType_MsgBeat: // broadcast heartbeat to Followers
+		r.heartbeatElapsed = 0
+		r.broadcastHeartbeat()
 	case pb.MessageType_MsgHeartbeatResponse:
 		//
 	default:
@@ -359,8 +358,9 @@ func (r *Raft) Step(m pb.Message) error {
 		// local message
 	case m.Term < r.Term:
 		// ignore
+		log.Infof("Node[%d] State[%s] Term[%d] ignore message[%s:%d]", r.id, r.State.String(), r.Term, m.MsgType.String(), m.Term)
 		resp := pb.Message{
-			MsgType: m.MsgType + 1, // todo req => resp 可以这样吗
+			MsgType: MsgTypeReq2Resp(m.MsgType),
 			To:      m.From,
 			From:    r.id,
 			Term:    r.Term,
@@ -368,46 +368,43 @@ func (r *Raft) Step(m pb.Message) error {
 		if m.MsgType == pb.MessageType_MsgRequestVote { // reject vote req
 			resp.Reject = true
 		}
-		r.sendMsg(resp)
+		r.sendMessage(resp)
 		return nil
 	case m.Term > r.Term:
 		// become Follower
 		lead := None
-		if m.MsgType == pb.MessageType_MsgSnapshot || m.MsgType == pb.MessageType_MsgHeartbeat ||
-			m.MsgType == pb.MessageType_MsgAppend { // 其他消息不能确定谁是Leader
+		if m.MsgType == pb.MessageType_MsgSnapshot || m.MsgType == pb.MessageType_MsgHeartbeat || m.MsgType == pb.MessageType_MsgAppend { // 其他消息不能确定谁是Leader
 			lead = m.From
 		}
 		r.becomeFollower(m.Term, lead)
 	}
 	// handle Msg
 	switch m.MsgType {
-	case pb.MessageType_MsgRequestVote: // 处理投票请求(任何状态的节点处理投票请求的handler都一样)
-		r.handleVoteReq(m)
+	case pb.MessageType_MsgRequestVote: // vote request handler
+		r.handleVoteRequest(m)
 	default:
 		r.stepFunc(m)
 	}
 	return nil
 }
 
-func (r *Raft) sendMsg(msg pb.Message) {
+func (r *Raft) sendMessage(msg pb.Message) {
 	r.msgs = append(r.msgs, msg)
 }
 
-func (r *Raft) handleVoteReq(m pb.Message) {
-	resp := r.initRespMsg(m)
-	resp.MsgType = pb.MessageType_MsgRequestVoteResponse
+func (r *Raft) handleVoteRequest(m pb.Message) {
+	resp := r.getRespMessage(m)
 
 	// election restriction
 	canVote := (r.Vote == None && r.Lead == None) || r.Vote == m.From
 	isUpToDate := m.Term > r.Term || (m.Term == r.Term && m.LogTerm > r.RaftLog.LastIndex())
-	reject := canVote && isUpToDate
+	resp.Reject = !(canVote && isUpToDate)
 
-	if !reject {
+	if !resp.Reject {
 		r.Vote, r.votes[m.From] = m.From, true
 	}
-	resp.Reject = reject
 
-	r.sendMsg(resp)
+	r.sendMessage(resp)
 }
 
 // zero election timeout => term++ => become Candidate => vote itself => vote req rpc
@@ -416,7 +413,7 @@ func (r *Raft) startElection() {
 
 	li := r.RaftLog.LastIndex()
 	lt, _ := r.RaftLog.Term(r.RaftLog.LastIndex())
-	msg := pb.Message{
+	req := pb.Message{
 		MsgType: pb.MessageType_MsgRequestVote,
 		From:    r.id,
 		Term:    r.Term,
@@ -427,15 +424,14 @@ func (r *Raft) startElection() {
 		if p == r.id {
 			continue
 		}
-		msg.To = p
-		r.sendMsg(msg)
+		req.To = p
+		r.sendMessage(req)
 	}
 }
 
-// 发起选举前，重新状态
+// 发起选举前，重置状态
 func (r *Raft) electionReset() {
-	r.electionElapsed = 0
-	r.Vote, r.votes, r.Lead = 1, make(map[uint64]bool), None
+	r.electionElapsed, r.Vote, r.votes, r.Lead, r.Term = 0, 1, make(map[uint64]bool), None, r.Term+1
 }
 
 // handleAppendEntries handle AppendEntries RPC request
@@ -463,10 +459,27 @@ func (r *Raft) removeNode(id uint64) {
 	// Your Code Here (3A).
 }
 
-func (r *Raft) initRespMsg(msg pb.Message) pb.Message {
+func (r *Raft) getRespMessage(req pb.Message) pb.Message {
 	return pb.Message{
-		To:   msg.From,
-		From: r.id,
-		Term: r.Term,
+		To:      req.From,
+		From:    r.id,
+		Term:    r.Term,
+		MsgType: MsgTypeReq2Resp(req.MsgType),
+	}
+}
+
+func MsgTypeReq2Resp(req pb.MessageType) pb.MessageType {
+	switch req {
+	case pb.MessageType_MsgHeartbeat: // heartbeat req
+		return pb.MessageType_MsgHeartbeatResponse
+	case pb.MessageType_MsgAppend: // log append req
+		return pb.MessageType_MsgAppendResponse
+	case pb.MessageType_MsgRequestVote: // vote req
+		return pb.MessageType_MsgRequestVoteResponse
+	case pb.MessageType_MsgSnapshot:
+		return pb.MessageType_MsgSnapshot
+	default:
+		log.Infof("[MsgTypeReq2Resp] unexpected pb.MessageType[%s]", req.String())
+		return pb.MessageType_MsgHup
 	}
 }
