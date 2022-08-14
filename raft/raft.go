@@ -24,6 +24,7 @@ import (
 // None is a placeholder node ID used when there is no leader.
 const None uint64 = 0
 const InitTerm uint64 = 1
+const SingleNodeNum = 1
 
 // StateType represents the role of a node in a cluster.
 type StateType uint64
@@ -258,6 +259,10 @@ func (r *Raft) stepFollower(msg pb.Message) {
 	case pb.MessageType_MsgHup: // election timeout
 		r.becomeCandidate()
 		r.startElection()
+	case pb.MessageType_MsgRequestVote: // vote request handler
+		r.handleVoteRequest(msg)
+	case pb.MessageType_MsgHeartbeat: // leader heartbeat rpc
+		r.handleHeartbeat(msg)
 	case pb.MessageType_MsgAppend:
 		// todo
 	case pb.MessageType_MsgSnapshot:
@@ -275,11 +280,15 @@ func (r *Raft) becomeCandidate() {
 	log.Infof("Node[%d] become Candidate Term[%d]", r.id, r.Term)
 }
 
-// Candidate: heartbeat rpc & vote resp
+// Candidate rpc handler
 func (r *Raft) stepCandidate(msg pb.Message) {
 	switch msg.MsgType {
 	case pb.MessageType_MsgHup: // election timeout
 		r.startElection()
+	case pb.MessageType_MsgHeartbeat: // leader heartbeat
+		r.handleHeartbeat(msg)
+	case pb.MessageType_MsgRequestVote: // vote request
+		r.handleVoteRequest(msg)
 	case pb.MessageType_MsgRequestVoteResponse: // vote response
 		if !msg.Reject {
 			r.Vote++
@@ -385,14 +394,7 @@ func (r *Raft) Step(m pb.Message) error {
 		r.becomeFollower(m.Term, lead)
 	}
 	// handle Msg
-	switch m.MsgType {
-	case pb.MessageType_MsgRequestVote: // vote request handler
-		r.handleVoteRequest(m)
-	case pb.MessageType_MsgHeartbeat: // leader heartbeat rpc handler
-		r.handleHeartbeat(m)
-	default:
-		r.stepFunc(m)
-	}
+	r.stepFunc(m)
 	return nil
 }
 
@@ -415,10 +417,13 @@ func (r *Raft) handleVoteRequest(m pb.Message) {
 	r.sendMessage(resp)
 }
 
-// zero election timeout => term++ => become Candidate => vote itself => vote req rpc
+// zero election timeout => term++ => vote itself => vote req rpc
 func (r *Raft) startElection() {
 	r.electionReset()
-
+	if len(r.Prs)+1 == SingleNodeNum { // 单节点，直接晋升
+		r.becomeLeader()
+		return
+	}
 	li := r.RaftLog.LastIndex()
 	lt, _ := r.RaftLog.Term(r.RaftLog.LastIndex())
 	req := pb.Message{
@@ -449,6 +454,8 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 }
 
 // handleHeartbeat handle Heartbeat RPC request
+// 只有 Follower、Candidate 节点需要调用
+// Leader 节点不接受任期与自己一样的心跳 rpc，任期不一致的情况已在 step() 的统一前置逻辑处理
 func (r *Raft) handleHeartbeat(m pb.Message) {
 	// Your Code Here (2A).
 	r.electionElapsed = 0

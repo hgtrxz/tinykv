@@ -32,11 +32,11 @@ step() 作为消息处理的统一入口，会做一些统一的消息前置处�
 - Term < r.Term => reject request
 - Term > r.Term => update term&lead, becomeFollower
 
-任何节点处理 VoteRequest RPC 与 Heartbeat RPC 的流程一样，在 stepFunc() 外面处理：
+### stepFollower()、stepCandidate()
+
+投票请求处理：
 
 ![](/Users/shize.wang/personal/tinykv/design/imgs/vote_request.png)
-
-### stepFollower()、stepCandidate()
 
 在 step() 统一处理 VoteRequest RPC 之后，stepFollower()：
 
