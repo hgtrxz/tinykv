@@ -419,7 +419,7 @@ func (r *Raft) handleVoteResponse(resp pb.Message) {
 	if !resp.Reject {
 		r.Vote++
 	}
-	if r.Vote > uint64(len(r.Prs)/2) {
+	if r.Vote > uint64(r.getNodeNum()/2) {
 		r.becomeLeader()
 	}
 }
@@ -427,7 +427,7 @@ func (r *Raft) handleVoteResponse(resp pb.Message) {
 // zero election timeout => term++ => vote itself => vote req rpc
 func (r *Raft) startElection() {
 	r.electionReset()
-	if len(r.Prs)+1 == SingleNodeNum { // 单节点，直接晋升
+	if r.getNodeNum() == SingleNodeNum { // 单节点，直接晋升
 		r.becomeLeader()
 		return
 	}
@@ -495,6 +495,10 @@ func (r *Raft) getRespMessage(req pb.Message) pb.Message {
 		Term:    r.Term,
 		MsgType: MsgTypeReq2Resp(req.MsgType),
 	}
+}
+
+func (r *Raft) getNodeNum() int {
+	return len(r.Prs) + 1
 }
 
 func MsgTypeReq2Resp(req pb.MessageType) pb.MessageType {
