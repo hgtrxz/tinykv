@@ -23,7 +23,7 @@ import (
 
 // None is a placeholder node ID used when there is no leader.
 const None uint64 = 0
-const InitTerm uint64 = 1
+const InitTerm uint64 = 0
 const SingleNodeNum = 1
 
 // StateType represents the role of a node in a cluster.
@@ -182,6 +182,7 @@ func newRaft(c *Config) *Raft {
 		heartbeatTimeout: c.HeartbeatTick,
 		electionTimeout:  c.ElectionTick,
 		Prs:              make(map[uint64]*Progress),
+		votes:            make(map[uint64]bool),
 	}
 	li := raft.RaftLog.LastIndex()
 	hardState, confState, _ := raft.RaftLog.storage.InitialState()
@@ -200,11 +201,7 @@ func newRaft(c *Config) *Raft {
 		raft.Prs[p] = &Progress{Match: li + 1, Next: 0}
 	}
 	// raft log
-	var term uint64
-	if term = hardState.Term; term == None {
-		term = InitTerm
-	}
-	raft.Term, raft.Vote, raft.RaftLog.committed = term, hardState.Vote, hardState.Commit
+	raft.Term, raft.Vote, raft.RaftLog.committed = hardState.Term, hardState.Vote, hardState.Commit
 
 	// follower init...
 	raft.becomeFollower(raft.Term, raft.Lead)
@@ -264,7 +261,7 @@ func (r *Raft) stepFollower(msg pb.Message) {
 	case pb.MessageType_MsgHeartbeat: // leader heartbeat rpc
 		r.handleHeartbeat(msg)
 	case pb.MessageType_MsgAppend:
-		// todo
+		r.handleAppendEntries(msg)
 	case pb.MessageType_MsgSnapshot:
 		// todo
 	}
@@ -272,10 +269,8 @@ func (r *Raft) stepFollower(msg pb.Message) {
 }
 
 // becomeCandidate transform this peer's state to candidate
-// 不要在这里累加任期，任期变更统一有 step()的前置处理 与 startElection()处理
 func (r *Raft) becomeCandidate() {
-	r.randomElectionTimeout = r.electionTimeout + rand.Intn(r.electionTimeout)
-	r.State, r.Lead = StateCandidate, None
+	r.State, r.Lead, r.Term, r.randomElectionTimeout = StateCandidate, None, r.Term+1, r.electionTimeout+rand.Intn(r.electionTimeout)
 	r.tickerFunc, r.stepFunc = r.tickElection, r.stepCandidate
 	log.Infof("Node[%d] become Candidate Term[%d]", r.id, r.Term)
 }
@@ -284,18 +279,18 @@ func (r *Raft) becomeCandidate() {
 func (r *Raft) stepCandidate(msg pb.Message) {
 	switch msg.MsgType {
 	case pb.MessageType_MsgHup: // election timeout
+		r.becomeCandidate()
 		r.startElection()
 	case pb.MessageType_MsgHeartbeat: // leader heartbeat
+		r.becomeFollower(msg.Term, msg.From)
 		r.handleHeartbeat(msg)
 	case pb.MessageType_MsgRequestVote: // vote request
 		r.handleVoteRequest(msg)
 	case pb.MessageType_MsgRequestVoteResponse: // vote response
-		if !msg.Reject {
-			r.Vote++
-		}
-		if r.Vote > uint64(len(r.Prs)/2) {
-			r.becomeLeader()
-		}
+		r.handleVoteResponse(msg)
+	case pb.MessageType_MsgAppend: // leader append log entries
+		r.becomeFollower(msg.Term, msg.From)
+		r.handleAppendEntries(msg)
 	}
 }
 
@@ -407,7 +402,7 @@ func (r *Raft) handleVoteRequest(m pb.Message) {
 
 	// election restriction
 	canVote := (r.Vote == None && r.Lead == None) || r.Vote == m.From
-	isUpToDate := m.Term > r.Term || (m.Term == r.Term && m.LogTerm > r.RaftLog.LastIndex())
+	isUpToDate := m.Term > r.Term || (m.Term == r.Term && m.LogTerm >= r.RaftLog.LastIndex())
 	resp.Reject = !(canVote && isUpToDate)
 
 	if !resp.Reject {
@@ -415,6 +410,18 @@ func (r *Raft) handleVoteRequest(m pb.Message) {
 	}
 
 	r.sendMessage(resp)
+}
+
+func (r *Raft) handleVoteResponse(resp pb.Message) {
+	if r.State != StateCandidate {
+		return
+	}
+	if !resp.Reject {
+		r.Vote++
+	}
+	if r.Vote > uint64(len(r.Prs)/2) {
+		r.becomeLeader()
+	}
 }
 
 // zero election timeout => term++ => vote itself => vote req rpc
@@ -444,13 +451,14 @@ func (r *Raft) startElection() {
 
 // 发起选举前，重置状态
 func (r *Raft) electionReset() {
-	r.electionElapsed, r.Vote, r.votes, r.Lead, r.Term = 0, 1, make(map[uint64]bool), None, r.Term+1
+	r.electionElapsed, r.Vote, r.votes, r.Lead = 0, 1, make(map[uint64]bool), None
 	r.votes[r.id] = true
 }
 
 // handleAppendEntries handle AppendEntries RPC request
-func (r *Raft) handleAppendEntries(m pb.Message) {
-	// Your Code Here (2A).
+func (r *Raft) handleAppendEntries(req pb.Message) {
+	r.electionElapsed = 0
+	// todo 日志冲突解决
 }
 
 // handleHeartbeat handle Heartbeat RPC request

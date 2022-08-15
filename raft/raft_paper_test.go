@@ -232,13 +232,13 @@ func TestFollowerVote2AA(t *testing.T) {
 			{From: 1, To: tt.nvote, Term: 1, MsgType: pb.MessageType_MsgRequestVoteResponse, Reject: tt.wreject},
 		}
 		if !reflect.DeepEqual(msgs, wmsgs) {
-			t.Errorf("#%d: msgs = %v, want %v", i, msgs, wmsgs)
+			t.Errorf("#%d: \nmsgs = %+v, \nwant = %+v", i, msgs, wmsgs)
 		}
 	}
 }
 
 // TestCandidateFallback tests that while waiting for votes,
-// if a candidate receives an AppendEntries RPC from another server claiming
+// if a candidate receives an 「AppendEntries RPC」 from another server claiming
 // to be leader whose term is at least as large as the candidate's current term,
 // it recognizes the leader as legitimate and returns to follower state.
 // Reference: section 5.2
