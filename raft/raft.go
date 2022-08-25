@@ -321,9 +321,23 @@ func (r *Raft) stepLeader(req pb.Message) {
 		r.handleLogPropose(req)
 	case pb.MessageType_MsgHeartbeatResponse:
 		//
+	case pb.MessageType_MsgAppendResponse:
+		r.handleLogAppendResponse(req)
 	default:
 		//
 	}
+}
+
+// todo 什么时候触发
+func (r *Raft) broadcastLogAppendReq(msg pb.Message) {
+
+}
+
+func (r *Raft) handleLogAppendResponse(resp pb.Message) {
+	if r.State != StateLeader {
+		return
+	}
+	// todo
 }
 
 // 注意，不要写成异步的，否则无法通过 TestLeaderBcastBeat2AA() 用例
@@ -459,6 +473,7 @@ func (r *Raft) electionReset() {
 func (r *Raft) handleAppendEntries(req pb.Message) {
 	r.electionElapsed = 0
 	// todo 日志冲突解决
+	_ = r.getRespMessage(req)
 }
 
 // handleHeartbeat handle Heartbeat RPC request

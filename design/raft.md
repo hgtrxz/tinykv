@@ -59,9 +59,12 @@ stepCandidate():
 
 ## 并发处理
 
-分析 Raft 结构体各变量的并发情况，每个状态都存在哪些线程，哪些变量存在数据竞争的情况
+分析 Raft 结构体各变量的并发情况，每个状态都存在哪些线程，哪些变量存在数据竞争
 
 
+## Log Append
+
+![img.png](imgs/log_append.png)
 
 
 
