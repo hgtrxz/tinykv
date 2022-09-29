@@ -472,6 +472,7 @@ func (r *Raft) electionReset() {
 // handleAppendEntries handle AppendEntries RPC request
 func (r *Raft) handleAppendEntries(req pb.Message) {
 	r.electionElapsed = 0
+
 	// todo 日志冲突解决
 	_ = r.getRespMessage(req)
 }
